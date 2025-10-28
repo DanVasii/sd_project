@@ -176,8 +176,8 @@ server.post("/login", async (req, res) => {
     let token = jwt.sign({ userId: results[0].id, role: results[0].role }, "your_jwt_secret", { expiresIn: "1h" });
 
 
-    return res.status(200).json({ message: "Login successful", user: { id: : results[0].role, token: token } });
-  }catch(e){results[0].id, role
+    return res.status(200).json({ message: "Login successful", user: { id: results[0].id, role: results[0].role, token: token } });
+  }catch(e){
     console.error(e);
     return res.status(500).json({ error: "Internal server error" });
   }
