@@ -1,0 +1,183 @@
+version: '3.8'
+
+services:
+  frontend:
+    container_name: sd_frontend
+    build:
+      context: ./frontend
+    restart: always
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - node_modules_frontend:/app/node_modules
+
+  credentials_db:
+    container_name: sd_credentials_db
+    image: mysql:8.0
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: test
+      MYSQL_DATABASE: credentials_db
+      MYSQL_PASSWORD: test
+    ports:
+      - "3307:3306"
+    volumes:
+      - ./backend/auth/init-db:/docker-entrypoint-initdb.d
+      - credentials-mysql-data:/var/lib/mysql
+
+  devices_db:
+    container_name: sd_devices_db
+    image: mysql:8.0
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: test
+      MYSQL_DATABASE: devices_db
+      MYSQL_PASSWORD: test
+    ports:
+      - "3308:3306"
+    volumes:
+      - ./backend/devices/init-db:/docker-entrypoint-initdb.d
+      - devices-mysql-data:/var/lib/mysql
+
+  users_data_db:
+    container_name: sd_users_data_db
+    image: mysql:8.0
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: test
+      MYSQL_DATABASE: users_data_db
+      MYSQL_PASSWORD: test
+    ports:
+      - "3309:3306"
+    volumes:
+      - ./backend/users_data/init-db:/docker-entrypoint-initdb.d
+      - users-data-mysql-data:/var/lib/mysql
+
+  auth_backend:
+    container_name: sd_auth_backend
+    build:
+      context: ./backend/auth
+    restart: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/auth:/app
+      - node_modules_auth_backend:/app/node_modules
+    environment:
+      - NODE_ENV=development
+      - DB_HOST=credentials_db
+      - DB_USER=root
+      - DB_PASSWORD=test
+      - DB_NAME=credentials_db
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.auth_backend.rule=PathPrefix(`/auth_backend`)"
+      - "traefik.http.services.auth_backend.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.auth-backend-strip.stripPrefix.prefixes=/auth_backend"
+      
+      - "traefik.http.routers.auth_backend.middlewares=auth-backend-strip"
+
+  devices_backend:
+    container_name: sd_devices_backend
+    build:
+      context: ./backend/devices
+    restart: always
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./backend/devices:/app
+      - node_modules_auth_backend:/app/node_modules
+    environment:
+      - NODE_ENV=development
+      - DB_HOST=devices_db
+      - DB_USER=root
+      - DB_PASSWORD=test
+      - DB_NAME=devices_db
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.devices.rule=PathPrefix(`/devices`)"
+      - "traefik.http.services.devices.loadbalancer.server.port=8001"
+      - "traefik.http.middlewares.auth.forwardauth.address=http://sd_auth_backend:8000/verify"
+      - "traefik.http.middlewares.auth.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.auth.forwardauth.authRequestHeaders=X-User-Id,X-User-Role,Authorization"
+      - "traefik.http.middlewares.auth.forwardauth.authResponseHeaders=X-User-Id,X-User-Role,Authorization"
+      - "traefik.http.middlewares.cors.headers.accesscontrolallowmethods=GET,OPTIONS,PUT,POST,DELETE"
+      - "traefik.http.middlewares.cors.headers.accesscontrolalloworiginlist=http://localhost:5173"
+      - "traefik.http.middlewares.cors.headers.accesscontrolallowheaders=Content-Type,X-User-Id,X-User-Role,Authorization"
+      - "traefik.http.middlewares.cors.headers.accesscontrolallowcredentials=true"
+      - "traefik.http.middlewares.cors.headers.addvaryheader=true"
+      # Strip /devices prefix
+      - "traefik.http.middlewares.devices-strip.stripPrefix.prefixes=/devices"
+      - "traefik.http.routers.devices.middlewares=devices-strip,cors,auth"
+
+  users_data_backend:
+    container_name: sd_users_data_backend
+    build:
+      context: ./backend/users_data
+    restart: always
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./backend/users_data:/app
+      - node_modules_auth_backend:/app/node_modules
+    environment:
+      - NODE_ENV=development
+      - DB_HOST=users_data_db
+      - DB_USER=root
+      - DB_PASSWORD=test
+      - DB_NAME=users_data_db
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.users.rule=PathPrefix(`/users_data`)"
+      - "traefik.http.services.users.loadbalancer.server.port=8002"
+      - "traefik.http.middlewares.auth.forwardauth.address=http://sd_auth_backend:8000/verify"
+      - "traefik.http.middlewares.auth.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.auth.forwardauth.authRequestHeaders=X-User-Id,X-User-Role,Authorization"
+      - "traefik.http.middlewares.auth.forwardauth.authResponseHeaders=X-User-Id,X-User-Role,Authorization"
+      - "traefik.http.middlewares.cors.headers.accesscontrolallowmethods=GET,OPTIONS,PUT,POST,DELETE"
+      - "traefik.http.middlewares.cors.headers.accesscontrolalloworiginlist=http://localhost:5173"
+      - "traefik.http.middlewares.cors.headers.accesscontrolallowheaders=Content-Type,X-User-Id,X-User-Role,Authorization"
+      - "traefik.http.middlewares.cors.headers.accesscontrolallowcredentials=true"
+      - "traefik.http.middlewares.cors.headers.addvaryheader=true"
+
+      # Strip /users prefix
+      - "traefik.http.middlewares.users-strip.stripPrefix.prefixes=/users_data"
+      - "traefik.http.routers.users.middlewares=users-strip,cors,auth"
+
+  traefik:
+    image: traefik:v2.10
+    container_name: sd_api_gateway
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --api.insecure=true
+      - --log.level=DEBUG
+    ports:
+      - "80:80"
+      - "8080:8080"
+    networks:
+      - default
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+  
+  swagger-docs:
+    image: swaggerapi/swagger-ui
+    container_name: sd_swagger_docs
+    environment:
+      URLS: '[{"name":"Auth API","url":"http://localhost/auth_backend/api-docs.json"},{"name":"Devices API","url":"http://localhost:8001/api-docs.json"},{"name":"Users Data API","url":"http://localhost:8002/api-docs.json"}]'
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.swagger.rule=PathPrefix(`/`)"
+      - "traefik.http.services.swagger.loadbalancer.server.port=8080"
+    networks:
+      - default
+
+
+volumes:
+  credentials-mysql-data:
+  devices-mysql-data:
+  users-data-mysql-data:
+  node_modules_frontend:
+  node_modules_auth_backend:

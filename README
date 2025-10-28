@@ -1,0 +1,20 @@
+In order to run the application you need to run the following command: docker compose up --build -d
+After this the application will start and the db's will have some default data.
+
+In order to access the application, visit http://localhost:5173
+For the swagger docs access http://localhost
+
+The app has 2 dashboards, one for each role.
+Client:
+Can see it's devices
+Admin:
+Crud devices and users and also can assign devices to users.
+Backend:
+auth: 
+This backend is for login, register and verification of jwt token
+devices:
+This backend handles all operation for devices
+users:
+This backend handles all operation for users
+
+For each request, traefik checks the jwr token by sending the request first to the auth backend, then if response is 200 will proceed to forward the request to the desired microservice. Then each microservice checks the user role to see if he has permission for a given route.

@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "mysql": "^2.18.1",
+    "swagger-jsdoc": "^6.2.8"
+  }
+}
