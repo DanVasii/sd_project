@@ -6,3 +6,4 @@
 ./backend/users_data/init-db/*
 ./backend/users_data/node_modules
 ./frontend/node_modules
+node_modules
