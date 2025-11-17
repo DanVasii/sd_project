@@ -1,0 +1,8 @@
+./node_modules
+./backend/auth/init-db/*
+./backend/auth/node_modules
+./backend/devices/init-db/*
+./backend/devices/node_modules
+./backend/users_data/init-db/*
+./backend/users_data/node_modules
+./frontend/node_modules
