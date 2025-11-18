@@ -6,7 +6,7 @@ const RABBIT_PASS = process.env.RABBIT_PASS || 'test';
 const RABBIT_URL = `amqp://${RABBIT_USER}:${RABBIT_PASS}@${RABBIT_HOST}`;
 const DATA_QUEUE = 'device_data_queue'; 
 
-const SIMULATED_DEVICE_ID = parseInt(process.env.SIMULATED_DEVICE_ID || 3); 
+const SIMULATED_DEVICE_ID = parseInt(process.env.SIMULATED_DEVICE_ID || 23); 
 
 let channel;
 
