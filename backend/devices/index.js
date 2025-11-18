@@ -3,6 +3,12 @@ const bodyParser = require("body-parser");
 const cors = require("cors");
 const mysql = require("mysql2/promise");
 const swaggerJSDoc = require("swagger-jsdoc");
+const amqp = require('amqplib');
+const RABBIT_HOST = process.env.RABBIT_HOST || 'rabbitmq';
+const RABBIT_USER = process.env.RABBIT_USER || 'root';
+const RABBIT_PASS = process.env.RABBIT_PASS || 'test';
+const RABBIT_URL = `amqp://${RABBIT_USER}:${RABBIT_PASS}@${RABBIT_HOST}`;
+const SYNC_QUEUE = 'sync_events_queue'; // Coada comună de sincronizare
 const port = 8001;
 
 server.use(bodyParser.json());
@@ -14,6 +20,71 @@ server.use(cors({
     credentials: true
 }));
 
+let channel;
+
+async function connectRabbitMQ() {
+    try {
+        const connection = await amqp.connect(RABBIT_URL);
+        connection.on("error", (err) => {
+            console.error("RabbitMQ Connection Error:", err.message);
+        });
+        channel = await connection.createChannel();
+        await channel.prefetch(1);
+        await channel.assertQueue(SYNC_QUEUE, { durable: true });
+        console.log("Devices Service connected to RabbitMQ and SYNC_QUEUE asserted.");
+
+        // Pornește Consumer-ul după ce canalul este gata
+        startSyncConsumer(); 
+    } catch (error) {
+        console.error("Failed to connect to RabbitMQ:", error.message);
+        channel.nack(msg, false, true);
+        setTimeout(connectRabbitMQ, 5000); 
+    }
+}
+
+// Funcție pentru a publica evenimente (folosită pentru DEVICE_CREATED/DELETED)
+function publishSyncEvent(type, data) {
+    const message = { type, data, timestamp: new Date().toISOString() };
+    if (channel) {
+        channel.sendToQueue(SYNC_QUEUE, Buffer.from(JSON.stringify(message)), { persistent: true });
+        console.log(`[SYNC PUBLISH] Event published: ${type} for ID ${data.id}`);
+    } else {
+        console.error("RabbitMQ channel not available. Failed to publish sync event.");
+    }
+}
+
+// Funcție pentru a consuma evenimentele (folosită pentru USER_CREATED/DELETED)
+async function startSyncConsumer() {
+    channel.consume(SYNC_QUEUE, async (msg) => {
+        if (msg !== null) {
+            const event = JSON.parse(msg.content.toString());
+            
+            // Procesează doar evenimentele legate de USER (ignoră DEVICE-urile publicate de el însuși)
+            if (event.type.startsWith('USER_')) {
+                const userId = event.data.id;
+                try {
+                    if (event.type === 'USER_CREATED' || event.type === 'USER_UPDATED') {
+                        // Inserează (sau ignoră dacă există deja) ID-ul în tabela locală `synced_users`
+                        await pool.query('INSERT IGNORE INTO synced_users (user_id) VALUES (?)', [userId]);
+                    } else if (event.type === 'USER_DELETED') {
+                        // Șterge din tabela locală. `devices.user_id` devine NULL automat (ON DELETE SET NULL).
+                        await pool.query('DELETE FROM synced_users WHERE user_id = ?', [userId]);
+                    }
+                    console.log(`[SYNC CONSUME] Processed ${event.type} for User ID ${userId}`);
+                    channel.ack(msg);
+                } catch (dbError) {
+                    console.error('[SYNC ERROR] Failed to process user event:', dbError);
+                    // Lăsați mesajul în coadă pentru reîncercare (nu trimiteți ack)
+                }
+            } else {
+                // Confirmă mesajul dacă nu este un eveniment de user (pentru a-l ignora)
+                channel.ack(msg);
+            }
+        }
+    });
+}
+
+connectRabbitMQ(); 
 
 let pool = mysql.createPool({
     host: process.env.DB_HOST,
@@ -254,6 +325,14 @@ server.post("/device", async (req, res) => {
             [name, max_consumption, image_url || null]
         );
 
+        let deviceId = result.insertId;
+
+        publishSyncEvent('DEVICE_CREATED', { 
+            id: deviceId, 
+            name: name,
+            max_consumption: max_consumption 
+        });
+
         return res.status(201).json({ message: "Device added successfully", deviceId: result.insertId });
 
     }catch(e){
@@ -315,6 +394,11 @@ server.delete("/device/:id", async (req, res) => {
         if (result.affectedRows === 0) {
             return res.status(404).json({ error: "Device not found" });
         }
+
+        publishSyncEvent('DEVICE_DELETED', { 
+            id: parseInt(deviceId) 
+        });
+
         return res.status(200).json({ message: "Device deleted successfully" });
     }catch(e){
         console.error(e);

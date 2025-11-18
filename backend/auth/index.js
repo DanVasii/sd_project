@@ -6,6 +6,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
 const swaggerJSDoc = require("swagger-jsdoc");
+const amqp = require('amqplib');
 const port = 8000;
 
 const options = {
@@ -59,6 +60,43 @@ server.get("/api-docs.json", (req, res) => {
   res.send(swaggerJSDoc(options));
 });
 
+
+const RABBIT_HOST = process.env.RABBIT_HOST || 'rabbitmq';
+const RABBIT_USER = process.env.RABBIT_USER || 'root';
+const RABBIT_PASS = process.env.RABBIT_PASS || 'test';
+const RABBIT_URL = `amqp://${RABBIT_USER}:${RABBIT_PASS}@${RABBIT_HOST}`;
+const SYNC_QUEUE = 'sync_events_queue'; // Coada dedicată sincronizării
+
+let channel;
+
+async function connectRabbitMQ() {
+    try {
+        const connection = await amqp.connect(RABBIT_URL);
+        connection.on("error", (err) => {
+            console.error("RabbitMQ Connection Error:", err.message);
+        });
+        channel = await connection.createChannel();
+        // Asigurăm că există coada de sincronizare, durabilă
+        await channel.assertQueue(SYNC_QUEUE, { durable: true });
+        console.log("Auth Service connected to RabbitMQ and SYNC_QUEUE asserted.");
+    } catch (error) {
+        console.error("Failed to connect to RabbitMQ:", error.message);
+        // Reîncercare după 5 secunde
+        setTimeout(connectRabbitMQ, 5000); 
+    }
+}
+
+function publishSyncEvent(type, data) {
+    const message = { type, data, timestamp: new Date().toISOString() };
+    if (channel) {
+        channel.sendToQueue(SYNC_QUEUE, Buffer.from(JSON.stringify(message)), { persistent: true });
+        console.log(`[SYNC PUBLISH] Event published: ${type} for User ID ${data.id}`);
+    } else {
+        console.error("RabbitMQ channel not available. Failed to publish sync event.");
+    }
+}
+
+connectRabbitMQ(); 
 
 server.use((req, res, next) => {
   console.log(`Incoming request: ${req.method} ${req.url}`);
@@ -229,7 +267,7 @@ server.post("/register", checkJWTMiddleware, async (req, res) => {
     return res.status(403).json({ error: "Forbidden" });
   }
 
-  const {username, password, role} = req.body;
+  const {username, password, role, name, email, avatar_url} = req.body;
   if (!username || !password || !role) {
     return res.status(400).json({ error: "Username, password, and role are required" });
   }
@@ -247,6 +285,15 @@ server.post("/register", checkJWTMiddleware, async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 8);
     const [results] = await pool.query("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", [username, hashedPassword, role]);
+    const userId = results.insertId;
+
+    publishSyncEvent('USER_CREATED', { 
+            id: userId, 
+            role: role,
+            name: name,
+            email: email,
+            avatar_url: avatar_url || null
+        });
 
     console.log("Registered new user with ID:", results.insertId);
     return res.status(201).json({ message: "User registered successfully", id: results.insertId });
@@ -314,6 +361,12 @@ server.delete("/user/:id", checkJWTMiddleware, async (req, res) => {
   const userId = req.params.id;
   try{
     await pool.query("DELETE FROM users WHERE id = ?", [userId]);
+    if (result.affectedRows > 0) {
+      publishSyncEvent('USER_DELETED', { 
+        id: parseInt(userId) 
+      });
+    }
+
     return res.status(200).json({ message: "User deleted successfully" });
   }catch(e){
     console.error(e);
@@ -449,7 +502,8 @@ server.put("/user/:id", checkJWTMiddleware, async (req, res) => {
     return res.status(403).json({ error: "Forbidden" });
   }
   const userId = req.params.id;
-  const {username, password, role} = req.body;
+  const {username, password, role, name, email, avatar_url} = req.body;
+
   if (!username || !role) {
     return res.status(400).json({ error: "Username and role are required" });
   }
@@ -468,6 +522,15 @@ server.put("/user/:id", checkJWTMiddleware, async (req, res) => {
     params.push(userId);
 
     await pool.query(query, params);
+
+    publishSyncEvent('USER_UPDATED', { 
+        id: parseInt(userId), 
+        role: role,
+        name: name,
+        email: email,
+        avatar_url: avatar_url || null
+    });
+      
     return res.status(200).json({ message: "User updated successfully" });
   }catch(e){
     console.error(e);

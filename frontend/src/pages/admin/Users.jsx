@@ -45,16 +45,22 @@ export default function Users() {
         };
 
         if (editingUser) {
-            let authData = {
+            // LOGICA UPDATE: UN SINGUR APEL PUT SPRE AUTH (Publisher)
+            
+            // Combină toate datele (credentials + profile) într-un singur payload
+            let combinedData = {
                 username: newUser.username,
-                role: newUser.role
+                role: newUser.role,
+                name: newUser.name, 
+                email: newUser.email, 
+                avatar_url: newUser.avatar_url, 
             };
             
             if (newUser.password && newUser.password.trim() !== "") {
-                authData.password = newUser.password;
+                combinedData.password = newUser.password;
             }
 
-            //update auth service
+            // 1. Apel unic de UPDATE către Auth Service (Publisher)
             try {
                 const res = await fetch(`http://localhost/auth_backend/user/${editingUser.user_id}`, {
                     method: "PUT",
@@ -62,58 +68,38 @@ export default function Users() {
                         "Content-Type": "application/json",
                         "Authorization": `Bearer ${localStorage.getItem("auth_token")}`,
                     },
-                    body: JSON.stringify(authData),
+                    body: JSON.stringify(combinedData),
                     credentials: "include"
                 });
+
                 if (!res.ok) {
                     const errorData = await res.json();
-                    toast.error(errorData.error || "Failed to update user in auth service");
+                    toast.error(errorData.error || "Failed to update user");
                     return;
                 }
 
-                //then update users_data service
-                try {
-                    const res2 = await fetch(`http://localhost/users_data/user/${editingUser.user_id}`, {
-                        method: "PUT",
-                        headers: {
-                            "Content-Type": "application/json",
-                            "Authorization": `Bearer ${localStorage.getItem("auth_token")}`,
-                        },
-                        body: JSON.stringify({
-                            name: newUser.name, 
-                            email: newUser.email,
-                            avatar_url: newUser.avatar_url
-                        }),
-                        credentials: "include"
-                    });
-                    if (!res2.ok) {
-                        console.error("Failed to update user in users data service");
-                        toast.error("Failed to update user in users data service");
-                        return;
-                    }
-                    toast.success("User updated successfully");
+                // SUCCES: Auth a actualizat credentials și a publicat mesajul USER_UPDATED asincron.
+                toast.success("User update initiated successfully (asynchronous flow)");
 
-                    setUsers(users.map((user)=> user.user_id === editingUser.user_id ? {
-                        ...user,
-                        name: newUser.name,
-                    } : user));
-                    setAddDeviceModalOpen(false);
-                    setEditingUser(null);
-                } catch (err) {
-                    console.error("Error updating user in users data service:", err);
-                    toast.error("Error updating user in users data service");
-                    return;
-                }
-
+                // Actualizăm starea locală a utilizatorilor imediat pentru UX
+                setUsers(users.map((user)=> user.user_id === editingUser.user_id ? {
+                    ...user,
+                    name: newUser.name, // Numele este actualizat local
+                } : user));
+                
+                setAddDeviceModalOpen(false);
+                setEditingUser(null);
+                
             } catch (err) {
-                console.error("Error updating user in auth service:", err);
-                toast.error("Error updating user in auth service");
+                console.error("Error updating user:", err);
+                toast.error("An error occurred during user update.");
                 return;
             }
-
+        
         } else {
-
+            // LOGICA ADĂUGARE: UN SINGUR APEL POST SPRE AUTH (Publisher)
             try {
+                // 1. Apel unic către Auth Service, incluzând TOATE datele (credentials + profile)
                 const res = await fetch("http://localhost/auth_backend/register", { 
                     method: "POST",
                     headers: {
@@ -123,7 +109,10 @@ export default function Users() {
                     body: JSON.stringify({
                         username: newUser.username,
                         password: newUser.password,
-                        role: newUser.role
+                        role: newUser.role,
+                        name: newUser.name, 
+                        email: newUser.email,
+                        avatar_url: newUser.avatar_url
                     }),
                     credentials: "include"
                 });
@@ -137,54 +126,33 @@ export default function Users() {
                 const resData = await res.json();
                 const userId = resData.id;
 
-                //then add user details to users_data service
-                try {
-                    const res2 = await fetch(`http://localhost/users_data/user/${userId}`, {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                            "Authorization": `Bearer ${localStorage.getItem("auth_token")}`,
-                        },
-                        body: JSON.stringify({
-                            name: newUser.name, 
-                            email: newUser.email,
-                            avatar_url: newUser.avatar_url
-                        }),
-                        credentials: "include"
-                    });
-                    if (!res2.ok) {
-                        console.error("Failed to create user in users data service");
-                        toast.error("Failed to create user in users data service");
-                        return;
-                    }
-                } catch (err) {
-                    console.error("Error creating user in users data service:", err);
-                    toast.error("Error creating user in users data service");
-                    return;
-                }
-
-                toast.success("User created successfully");
+                // Profilul este salvat acum de Users Data Service ASINCRON
+                toast.success("User created successfully (via asynchronous flow)");
+                
+                // Actualizăm starea locală a utilizatorilor imediat pentru UX
                 setUsers([...users, {
                     user_id: userId,
-                    name: newUser.name,
+                    name: newUser.name, 
                     created_at: new Date().toISOString()
                 }]);
                 setAddDeviceModalOpen(false);
 
             } catch (err) {
-                console.error("Error creating user in auth service:", err);
+                console.error("Error creating user:", err);
                 toast.error("Error creating user in auth service");
                 return;
             }
-    }
+        }
 
     }
 
     const handleDelete = async (userId)=>{
+        // LOGICA DELETE: UN SINGUR APEL DELETE SPRE AUTH (Publisher)
         if (!window.confirm("Are you sure you want to delete this user?")) {
             return;
         }
         try {
+            // 1. Apel unic de DELETE către Auth Service (Publisher)
             const res = await fetch(`http://localhost/auth_backend/user/${userId}`, {
                 method: "DELETE",
                 headers: {
@@ -194,27 +162,9 @@ export default function Users() {
                 credentials: "include"
             });
             if (res.ok) {
-                //delete from users_data service
-                try {
-                    const res2 = await fetch(`http://localhost/users_data/user/${userId}`, {
-                        method: "DELETE",
-                        headers: {
-                            "Content-Type": "application/json", 
-                            "Authorization": `Bearer ${localStorage.getItem("auth_token")}`,
-                        },
-                        credentials: "include"
-                    });
-                    if (res2.ok) {
-                        setUsers(users.filter((user)=> user.user_id !== userId));
-                        toast.success("User deleted successfully");
-                    } else {
-                        console.error("Failed to delete user from users data service");
-                        toast.error("Failed to delete user from users data service");
-                    }
-                } catch (err) {
-                    console.error("Error deleting user from users data service:", err);
-                    toast.error("Error deleting user from users data service");
-                }
+                // SUCES: Ne bazăm pe mesajul USER_DELETED publicat de Auth
+                setUsers(users.filter((user)=> user.user_id !== userId));
+                toast.success("User deletion initiated successfully (asynchronous flow)");
             }
             else {
                 console.error("Failed to delete user");
@@ -223,11 +173,12 @@ export default function Users() {
         } catch (err) {
             console.error("Error deleting user:", err);
             toast.error("Error deleting user");
-        }   
+        }   
     }
 
     const handleEditUser = async (user_id)=>{
 
+        // LOGICA PRE-FETCH RĂMÂNE SINCRONĂ (2 x GET) pentru a obține toate datele necesare
         //parse credentials from auth service
         try {
             const res = await fetch(`http://localhost/auth_backend/user/${user_id}`, {
@@ -297,12 +248,12 @@ export default function Users() {
             showUserModal && <div className='fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center'>
                 <div className='bg-white p-4 rounded-xl w-96'>
                     <h2 className='text-2xl font-bold mb-4'>{
-                        editingUser ? "Edit User" : "Add User"    
+                        editingUser ? "Edit User" : "Add User"    
                     }</h2>
                     <form onSubmit={handleAddUser}>
                         <div className='mb-4'>
                             <label className='block mb-2 font-bold'>Name</label>
-                            <input type="text" name="name" className='w-full border border-gray-300 p-2 rounded-xl'  defaultValue={editingUser?.name}/>
+                            <input type="text" name="name" className='w-full border border-gray-300 p-2 rounded-xl'  defaultValue={editingUser?.name}/>
                         </div>
                         <div className='mb-4'>
                             <label className='block mb-2 font-bold'>Email</label>

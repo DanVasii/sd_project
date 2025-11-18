@@ -10,4 +10,4 @@ create table if not exists users (
 
 insert into users (user_id, name, email, avatar_url) values
 (1, 'Alice Johnson', 'alice@yahoo.com', 'https://i.pravatar.cc/150?img=1'),
-(2, 'Bob Smith', 'bob@yahoo.com', 'https://i.pravatar.cc/150?img=2'),
+(2, 'Bob Smith', 'bob@yahoo.com', 'https://i.pravatar.cc/150?img=2');

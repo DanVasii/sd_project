@@ -3,6 +3,7 @@ const bodyParser = require("body-parser");
 const cors = require("cors");
 const mysql = require("mysql2/promise");
 const swaggerJSDoc = require("swagger-jsdoc");
+const amqp = require('amqplib');
 
 const port = 8002;
 
@@ -22,6 +23,78 @@ let pool = mysql.createPool({
     connectionLimit: 10,
 });
 
+const RABBIT_HOST = process.env.RABBIT_HOST || 'rabbitmq'; 
+const RABBIT_USER = process.env.RABBIT_USER || 'root'; 
+const RABBIT_PASS = process.env.RABBIT_PASS || 'test';
+const RABBIT_URL = `amqp://${RABBIT_USER}:${RABBIT_PASS}@${RABBIT_HOST}`;
+const SYNC_QUEUE = 'sync_events_queue'; // Coada de sincronizare
+
+let channel;
+
+async function connectRabbitMQ() {
+    try {
+        const connection = await amqp.connect(RABBIT_URL);
+        connection.on("error", (err) => {
+            console.error("RabbitMQ Connection Error:", err.message);
+        });
+        channel = await connection.createChannel();
+        await channel.prefetch(1);
+        await channel.assertQueue(SYNC_QUEUE, { durable: true });
+        console.log("Users Data Service connected to RabbitMQ sync consumer.");
+
+        startSyncConsumer();
+        
+    } catch (error) {
+        console.error("Failed to connect to RabbitMQ:", error.message);
+        setTimeout(connectRabbitMQ, 5000); 
+    }
+}
+
+// -------------------- Consumer Asincron (Core EDA) --------------------
+
+// NOU: Funcția Consumer procesează evenimentele publicate de Auth Service
+async function startSyncConsumer() {
+    channel.consume(SYNC_QUEUE, async (msg) => {
+        if (msg !== null) {
+            console.log("Primit mesaj de sincronizare:", msg.content.toString());
+            
+            
+            try {
+                const event = JSON.parse(msg.content.toString());
+            
+            // Extragem ID-ul și detaliile de profil
+            const { id, name, email, avatar_url } = event.data;
+                if (event.type === 'USER_CREATED') {
+                    // Creare profil (asincronă)
+                    await pool.query(
+                        "INSERT INTO users (user_id, name, email, avatar_url) VALUES (?, ?, ?, ?)", 
+                        [id, name, email, avatar_url]
+                    );
+                    console.log(`[SYNC CONSUME] User profile created for ID: ${id}`);
+                } else if (event.type === 'USER_UPDATED') {
+                    // Actualizare profil (asincronă)
+                    await pool.query(
+                        "UPDATE users SET name = ?, email = ?, avatar_url = ? WHERE user_id = ?",
+                        [name, email, avatar_url, id]
+                    );
+                    console.log(`[SYNC CONSUME] User profile updated for ID: ${id}`);
+                } else if (event.type === 'USER_DELETED') {
+                     // Ștergere profil (asincronă)
+                    await pool.query("DELETE FROM users WHERE user_id = ?", [id]);
+                    console.log(`[SYNC CONSUME] User profile deleted for ID: ${id}`);
+                }
+                
+                channel.ack(msg); // Confirmă procesarea cu succes
+            } catch (dbError) {
+                console.error(`[SYNC DB ERROR] Failed to process `, dbError.message);
+                // Nu trimite ACK; mesajul va fi reîncercat
+                channel.nack(msg, false, true);
+            }
+        }
+    });
+}
+
+connectRabbitMQ(); 
 
 const options = {
   definition: {
