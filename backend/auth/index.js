@@ -65,8 +65,7 @@ const RABBIT_HOST = process.env.RABBIT_HOST || 'rabbitmq';
 const RABBIT_USER = process.env.RABBIT_USER || 'root';
 const RABBIT_PASS = process.env.RABBIT_PASS || 'test';
 const RABBIT_URL = `amqp://${RABBIT_USER}:${RABBIT_PASS}@${RABBIT_HOST}`;
-const SYNC_QUEUE = 'sync_events_queue'; // Coada dedicată sincronizării
-
+const SYNC_EXCHANGE = 'sync_events_exchange';
 let channel;
 
 async function connectRabbitMQ() {
@@ -76,12 +75,10 @@ async function connectRabbitMQ() {
             console.error("RabbitMQ Connection Error:", err.message);
         });
         channel = await connection.createChannel();
-        // Asigurăm că există coada de sincronizare, durabilă
-        await channel.assertQueue(SYNC_QUEUE, { durable: true });
+        await channel.assertExchange(SYNC_EXCHANGE, 'fanout', { durable: true });
         console.log("Auth Service connected to RabbitMQ and SYNC_QUEUE asserted.");
     } catch (error) {
         console.error("Failed to connect to RabbitMQ:", error.message);
-        // Reîncercare după 5 secunde
         setTimeout(connectRabbitMQ, 5000); 
     }
 }
@@ -89,8 +86,8 @@ async function connectRabbitMQ() {
 function publishSyncEvent(type, data) {
     const message = { type, data, timestamp: new Date().toISOString() };
     if (channel) {
-        channel.sendToQueue(SYNC_QUEUE, Buffer.from(JSON.stringify(message)), { persistent: true });
-        console.log(`[SYNC PUBLISH] Event published: ${type} for User ID ${data.id}`);
+      channel.publish(SYNC_EXCHANGE, '', Buffer.from(JSON.stringify(message)), { persistent: true });
+      console.log(`[SYNC PUBLISH] Event published: ${type} for User ID ${data.id}`);
     } else {
         console.error("RabbitMQ channel not available. Failed to publish sync event.");
     }
@@ -360,7 +357,7 @@ server.delete("/user/:id", checkJWTMiddleware, async (req, res) => {
   }
   const userId = req.params.id;
   try{
-    await pool.query("DELETE FROM users WHERE id = ?", [userId]);
+    const [result] = await pool.query("DELETE FROM users WHERE id = ?", [userId]);
     if (result.affectedRows > 0) {
       publishSyncEvent('USER_DELETED', { 
         id: parseInt(userId) 

@@ -18,3 +18,7 @@ users:
 This backend handles all operation for users
 
 For each request, traefik checks the jwr token by sending the request first to the auth backend, then if response is 200 will proceed to forward the request to the desired microservice. Then each microservice checks the user role to see if he has permission for a given route.
+
+Part 2:
+Added rabbitmq and monitoring, as well as simulator.
+Rabit mq uses exhcanges and when a sync is needed it will publish the message to the exchange, then the consumers will get notified and process the data accoring to the project requirements.

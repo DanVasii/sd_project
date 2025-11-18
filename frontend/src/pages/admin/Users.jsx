@@ -78,13 +78,11 @@ export default function Users() {
                     return;
                 }
 
-                // SUCCES: Auth a actualizat credentials și a publicat mesajul USER_UPDATED asincron.
-                toast.success("User update initiated successfully (asynchronous flow)");
+                toast.success("User update initiated successfully ");
 
-                // Actualizăm starea locală a utilizatorilor imediat pentru UX
                 setUsers(users.map((user)=> user.user_id === editingUser.user_id ? {
                     ...user,
-                    name: newUser.name, // Numele este actualizat local
+                    name: newUser.name, 
                 } : user));
                 
                 setAddDeviceModalOpen(false);
@@ -97,9 +95,7 @@ export default function Users() {
             }
         
         } else {
-            // LOGICA ADĂUGARE: UN SINGUR APEL POST SPRE AUTH (Publisher)
             try {
-                // 1. Apel unic către Auth Service, incluzând TOATE datele (credentials + profile)
                 const res = await fetch("http://localhost/auth_backend/register", { 
                     method: "POST",
                     headers: {
@@ -126,10 +122,8 @@ export default function Users() {
                 const resData = await res.json();
                 const userId = resData.id;
 
-                // Profilul este salvat acum de Users Data Service ASINCRON
-                toast.success("User created successfully (via asynchronous flow)");
+                toast.success("User created successfully ");
                 
-                // Actualizăm starea locală a utilizatorilor imediat pentru UX
                 setUsers([...users, {
                     user_id: userId,
                     name: newUser.name, 
@@ -147,12 +141,10 @@ export default function Users() {
     }
 
     const handleDelete = async (userId)=>{
-        // LOGICA DELETE: UN SINGUR APEL DELETE SPRE AUTH (Publisher)
         if (!window.confirm("Are you sure you want to delete this user?")) {
             return;
         }
         try {
-            // 1. Apel unic de DELETE către Auth Service (Publisher)
             const res = await fetch(`http://localhost/auth_backend/user/${userId}`, {
                 method: "DELETE",
                 headers: {
@@ -164,7 +156,7 @@ export default function Users() {
             if (res.ok) {
                 // SUCES: Ne bazăm pe mesajul USER_DELETED publicat de Auth
                 setUsers(users.filter((user)=> user.user_id !== userId));
-                toast.success("User deletion initiated successfully (asynchronous flow)");
+                toast.success("User deletion initiated successfully ");
             }
             else {
                 console.error("Failed to delete user");
@@ -177,9 +169,6 @@ export default function Users() {
     }
 
     const handleEditUser = async (user_id)=>{
-
-        // LOGICA PRE-FETCH RĂMÂNE SINCRONĂ (2 x GET) pentru a obține toate datele necesare
-        //parse credentials from auth service
         try {
             const res = await fetch(`http://localhost/auth_backend/user/${user_id}`, {
                 method: "GET",

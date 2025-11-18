@@ -227,6 +227,11 @@ services:
       - "traefik.http.middlewares.auth.forwardauth.authRequestHeaders=X-User-Id,X-User-Role,Authorization"
       - "traefik.http.middlewares.auth.forwardauth.authResponseHeaders=X-User-Id,X-User-Role,Authorization"
       - "traefik.http.middlewares.monitoring-strip.stripPrefix.prefixes=/monitoring"
+      - "traefik.http.middlewares.cors.headers.accesscontrolallowmethods=GET,OPTIONS,PUT,POST,DELETE"
+      - "traefik.http.middlewares.cors.headers.accesscontrolalloworiginlist=http://localhost:5173"
+      - "traefik.http.middlewares.cors.headers.accesscontrolallowheaders=Content-Type,X-User-Id,X-User-Role,Authorization"
+      - "traefik.http.middlewares.cors.headers.accesscontrolallowcredentials=true"
+      - "traefik.http.middlewares.cors.headers.addvaryheader=true"
       # Aplicați middleware-ul de autentificare Traefik
       - "traefik.http.routers.monitoring.middlewares=monitoring-strip,cors,auth"
 

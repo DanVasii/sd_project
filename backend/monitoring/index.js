@@ -8,7 +8,8 @@ const swaggerUi = require("swagger-ui-express");
 
 const port = 8003;
 
-// -------------------- Configurare DB --------------------
+const MYSQL_DUPLICATE_ENTRY_CODE = 1062;
+
 let pool = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
@@ -16,17 +17,22 @@ let pool = mysql.createPool({
     database: process.env.DB_NAME,
     connectionLimit: 10,
 });
-
-// -------------------- Configurare RabbitMQ --------------------
+server.use(cors({
+    origin: "http://localhost:5173",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    exposedHeaders: ["X-User-Id", "X-User-Role"],
+    credentials: true
+}));
 const RABBIT_HOST = process.env.RABBIT_HOST || 'rabbitmq';
 const RABBIT_USER = process.env.RABBIT_USER || 'root';
 const RABBIT_PASS = process.env.RABBIT_PASS || 'test';
 const RABBIT_URL = `amqp://${RABBIT_USER}:${RABBIT_PASS}@${RABBIT_HOST}`;
 
-// Coada pentru datele de consum
 const DATA_QUEUE = 'device_data_queue'; 
-// Coada pentru evenimentele de sincronizare
-const SYNC_QUEUE = 'sync_events_queue'; 
+
+const SYNC_EXCHANGE = 'sync_events_exchange'; 
+const SYNC_QUEUE_NAME = 'monitoring_sync_queue'; 
 
 let channel;
 
@@ -50,6 +56,8 @@ async function saveHourlyConsumption(deviceId, timestamp, consumption) {
     } catch (e) {
         console.error('DB Error on hourly aggregation:', e);
     }
+    // Mesajele din DATA_QUEUE sunt ACK-uite direct în startDataConsumer,
+    // pentru că în general nu sunt retriate.
 }
 
 // Funcție pentru a conecta la RabbitMQ și a porni Consumer-ii
@@ -60,14 +68,18 @@ async function connectRabbitMQ() {
             console.error("RabbitMQ Connection Error:", err.message);
         });
         channel = await connection.createChannel();
-        // Asigură existența ambelor cozi
+        await channel.prefetch(1); 
         await channel.assertQueue(DATA_QUEUE, { durable: true });
-        await channel.assertQueue(SYNC_QUEUE, { durable: true });
-        console.log("Monitoring Service connected to RabbitMQ and all queues asserted.");
+        await channel.assertExchange(SYNC_EXCHANGE, 'fanout', { durable: true });
+        
+        const q = await channel.assertQueue(SYNC_QUEUE_NAME, { durable: true });
+        
+        await channel.bindQueue(q.queue, SYNC_EXCHANGE, '');
+        
+        console.log(`Monitoring Service connected to RabbitMQ and is listening on queue ${q.queue}.`);
 
-        // Pornește ambii consumeri
         startDataConsumer(); 
-        startSyncConsumer();
+        startSyncConsumer(q.queue);
         
     } catch (error) {
         console.error("Failed to connect to RabbitMQ:", error.message);
@@ -75,8 +87,6 @@ async function connectRabbitMQ() {
     }
 }
 
-
-// Consumer 1: Procesează Datele de Consum (Data Collection Broker)
 async function startDataConsumer() {
     channel.consume(DATA_QUEUE, (msg) => {
         if (msg !== null) {
@@ -84,7 +94,6 @@ async function startDataConsumer() {
             const { deviceId, measurement_value, timestamp } = event;
             
             if (deviceId && measurement_value !== undefined) {
-                // Salvează valoarea (10 min) direct în DB, lăsând DB-ul să facă agregarea (sumare).
                 saveHourlyConsumption(deviceId, timestamp, measurement_value);
             }
 
@@ -93,36 +102,43 @@ async function startDataConsumer() {
     });
 }
 
-// Consumer 2: Procesează Evenimentele de Sincronizare (Synchronization Broker)
-async function startSyncConsumer() {
-    channel.consume(SYNC_QUEUE, (msg) => {
+async function startSyncConsumer(queueName) {
+    channel.consume(queueName, async (msg) => {
         if (msg !== null) {
             const event = JSON.parse(msg.content.toString());
             
-            // Procesează doar evenimentele legate de DISPOZITIVE
             if (event.type.startsWith('DEVICE_')) {
                 const deviceId = event.data.id;
                 
-                if (event.type === 'DEVICE_DELETED') {
-                    // Când un dispozitiv este șters, ștergem și datele istorice din monitoring_db.
-                    pool.query('DELETE FROM hourly_consumption WHERE device_id = ?', [deviceId])
-                        .then(() => console.log(`[SYNC CONSUME] Device Deleted: Cleared historical data for ID ${deviceId}`))
-                        .catch(e => console.error(`[SYNC DB ERROR] Failed to delete data for ID ${deviceId}:`, e));
-                } else if (event.type === 'DEVICE_CREATED') {
-                    console.log(`[SYNC CONSUME] Device Registered: Ready to collect data for ID ${deviceId}`);
+                try {
+                    if (event.type === 'DEVICE_DELETED') {
+                        await pool.query('DELETE FROM hourly_consumption WHERE device_id = ?', [deviceId]);
+                        console.log(`[SYNC CONSUME] Device Deleted: Cleared historical data for ID ${deviceId}`);
+                    } else if (event.type === 'DEVICE_CREATED') {
+                        console.log(`[SYNC CONSUME] Device Registered: Ready to collect data for ID ${deviceId}`);
+                    }
+                    
+                    channel.ack(msg); 
+                } catch (dbError) {
+                    console.error(`[SYNC DB ERROR] Failed to process ${event.type} for ID ${deviceId}:`, dbError.message);
+                    if (dbError.errno && dbError.errno === MYSQL_DUPLICATE_ENTRY_CODE) {
+                        console.warn(`[SYNC WARNING] Permanent error (Duplicate Key ${deviceId}). Acknowledging message.`);
+                        channel.ack(msg); 
+                    } else {
+                        console.error("[SYNC ERROR] Transient or unknown error encountered. Requeuing message.");
+                        channel.nack(msg, false, true); 
+                    }
                 }
+            } else {
+                channel.ack(msg);
             }
-            
-            channel.ack(msg);
         }
     });
 }
 
 
-// Inițializare servicii la pornirea aplicației
 connectRabbitMQ(); 
 
-// -------------------- Express Server Setup --------------------
 server.use(bodyParser.json());
 server.use(cors({
     origin: "http://localhost:5173",

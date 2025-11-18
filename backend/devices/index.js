@@ -9,6 +9,7 @@ const RABBIT_USER = process.env.RABBIT_USER || 'root';
 const RABBIT_PASS = process.env.RABBIT_PASS || 'test';
 const RABBIT_URL = `amqp://${RABBIT_USER}:${RABBIT_PASS}@${RABBIT_HOST}`;
 const SYNC_QUEUE = 'sync_events_queue'; // Coada comună de sincronizare
+const SYNC_EXCHANGE = 'sync_events_exchange';
 const port = 8001;
 
 server.use(bodyParser.json());
@@ -30,11 +31,12 @@ async function connectRabbitMQ() {
         });
         channel = await connection.createChannel();
         await channel.prefetch(1);
-        await channel.assertQueue(SYNC_QUEUE, { durable: true });
+        await channel.assertExchange(SYNC_EXCHANGE, 'fanout', { durable: true });
+        const q = await channel.assertQueue('', { exclusive: true });
+        await channel.bindQueue(q.queue, SYNC_EXCHANGE, '');
         console.log("Devices Service connected to RabbitMQ and SYNC_QUEUE asserted.");
 
-        // Pornește Consumer-ul după ce canalul este gata
-        startSyncConsumer(); 
+        startSyncConsumer(q.queue);
     } catch (error) {
         console.error("Failed to connect to RabbitMQ:", error.message);
         channel.nack(msg, false, true);
@@ -42,7 +44,6 @@ async function connectRabbitMQ() {
     }
 }
 
-// Funcție pentru a publica evenimente (folosită pentru DEVICE_CREATED/DELETED)
 function publishSyncEvent(type, data) {
     const message = { type, data, timestamp: new Date().toISOString() };
     if (channel) {
@@ -53,31 +54,25 @@ function publishSyncEvent(type, data) {
     }
 }
 
-// Funcție pentru a consuma evenimentele (folosită pentru USER_CREATED/DELETED)
-async function startSyncConsumer() {
-    channel.consume(SYNC_QUEUE, async (msg) => {
+async function startSyncConsumer(queueName) {
+    channel.consume(queueName, async (msg) => {
         if (msg !== null) {
             const event = JSON.parse(msg.content.toString());
             
-            // Procesează doar evenimentele legate de USER (ignoră DEVICE-urile publicate de el însuși)
             if (event.type.startsWith('USER_')) {
                 const userId = event.data.id;
                 try {
                     if (event.type === 'USER_CREATED' || event.type === 'USER_UPDATED') {
-                        // Inserează (sau ignoră dacă există deja) ID-ul în tabela locală `synced_users`
                         await pool.query('INSERT IGNORE INTO synced_users (user_id) VALUES (?)', [userId]);
                     } else if (event.type === 'USER_DELETED') {
-                        // Șterge din tabela locală. `devices.user_id` devine NULL automat (ON DELETE SET NULL).
                         await pool.query('DELETE FROM synced_users WHERE user_id = ?', [userId]);
                     }
                     console.log(`[SYNC CONSUME] Processed ${event.type} for User ID ${userId}`);
                     channel.ack(msg);
                 } catch (dbError) {
                     console.error('[SYNC ERROR] Failed to process user event:', dbError);
-                    // Lăsați mesajul în coadă pentru reîncercare (nu trimiteți ack)
                 }
             } else {
-                // Confirmă mesajul dacă nu este un eveniment de user (pentru a-l ignora)
                 channel.ack(msg);
             }
         }
