@@ -69,7 +69,7 @@ async function connectRabbitMQ() {
         });
         channel = await connection.createChannel();
         await channel.prefetch(1); 
-        await channel.assertQueue(DATA_QUEUE, { durable: true });
+        const q2 = await channel.assertQueue(DATA_QUEUE, { durable: true });
         await channel.assertExchange(SYNC_EXCHANGE, 'fanout', { durable: true });
         
         const q = await channel.assertQueue(SYNC_QUEUE_NAME, { durable: true });
@@ -78,7 +78,7 @@ async function connectRabbitMQ() {
         
         console.log(`Monitoring Service connected to RabbitMQ and is listening on queue ${q.queue}.`);
 
-        startDataConsumer(); 
+        startDataConsumer(q2.queue); 
         startSyncConsumer(q.queue);
         
     } catch (error) {
@@ -87,9 +87,11 @@ async function connectRabbitMQ() {
     }
 }
 
-async function startDataConsumer() {
-    channel.consume(DATA_QUEUE, (msg) => {
+async function startDataConsumer(queueName) {
+    channel.consume(queueName, (msg) => {
         if (msg !== null) {
+            console.log("[DATA CONSUME] Received device data message.", msg.content.toString());
+
             const event = JSON.parse(msg.content.toString());
             const { deviceId, measurement_value, timestamp } = event;
             
@@ -106,15 +108,20 @@ async function startSyncConsumer(queueName) {
     channel.consume(queueName, async (msg) => {
         if (msg !== null) {
             const event = JSON.parse(msg.content.toString());
-            
+            console.log(`[SYNC CONSUME] Received event: ${event.type}`);
             if (event.type.startsWith('DEVICE_')) {
                 const deviceId = event.data.id;
                 
                 try {
                     if (event.type === 'DEVICE_DELETED') {
+                        await pool.query('DELETE FROM devices WHERE device_id = ?', [deviceId]);
                         await pool.query('DELETE FROM hourly_consumption WHERE device_id = ?', [deviceId]);
                         console.log(`[SYNC CONSUME] Device Deleted: Cleared historical data for ID ${deviceId}`);
                     } else if (event.type === 'DEVICE_CREATED') {
+                        await pool.query(
+                            'INSERT INTO devices (device_id) VALUES (?)',
+                            [deviceId]
+                        );
                         console.log(`[SYNC CONSUME] Device Registered: Ready to collect data for ID ${deviceId}`);
                     }
                     

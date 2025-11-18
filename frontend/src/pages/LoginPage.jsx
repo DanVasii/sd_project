@@ -5,7 +5,7 @@ export default function LoginPage() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [username, setUsername] = useState("admin2");
-    const [password, setPassword] = useState("adminpass");
+    const [password, setPassword] = useState("admin2");
     const navigate = useNavigate();
     
     const handleLogin = async (e)=>{

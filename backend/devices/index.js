@@ -8,7 +8,6 @@ const RABBIT_HOST = process.env.RABBIT_HOST || 'rabbitmq';
 const RABBIT_USER = process.env.RABBIT_USER || 'root';
 const RABBIT_PASS = process.env.RABBIT_PASS || 'test';
 const RABBIT_URL = `amqp://${RABBIT_USER}:${RABBIT_PASS}@${RABBIT_HOST}`;
-const SYNC_QUEUE = 'sync_events_queue'; // Coada comună de sincronizare
 const SYNC_EXCHANGE = 'sync_events_exchange';
 const port = 8001;
 
@@ -39,7 +38,7 @@ async function connectRabbitMQ() {
         startSyncConsumer(q.queue);
     } catch (error) {
         console.error("Failed to connect to RabbitMQ:", error.message);
-        channel.nack(msg, false, true);
+        // channel.nack(msg, false, true);
         setTimeout(connectRabbitMQ, 5000); 
     }
 }
@@ -47,7 +46,7 @@ async function connectRabbitMQ() {
 function publishSyncEvent(type, data) {
     const message = { type, data, timestamp: new Date().toISOString() };
     if (channel) {
-        channel.sendToQueue(SYNC_QUEUE, Buffer.from(JSON.stringify(message)), { persistent: true });
+        channel.publish(SYNC_EXCHANGE, '', Buffer.from(JSON.stringify(message)), { persistent: true });
         console.log(`[SYNC PUBLISH] Event published: ${type} for ID ${data.id}`);
     } else {
         console.error("RabbitMQ channel not available. Failed to publish sync event.");

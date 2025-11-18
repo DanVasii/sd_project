@@ -8,5 +8,15 @@ CREATE TABLE IF NOT EXISTS hourly_consumption (
     timestamp DATETIME NOT NULL, 
     energy_consumed FLOAT NOT NULL,
     -- Asigură că nu putem avea două înregistrări pentru același dispozitiv și aceeași oră
-    UNIQUE KEY device_hour (device_id, timestamp) 
+    UNIQUE KEY device_hour (device_id, timestamp),
+    add FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE
 );
+
+create table if not exists devices(
+    device_id int not null PRIMARY KEY
+);
+
+insert into devices (device_id) values
+(1),
+(2),
+(3)
